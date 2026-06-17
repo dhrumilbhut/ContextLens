@@ -29,6 +29,10 @@ yarn-error.log
 # Alembic
 backend/alembic/versions/*.pyc
 
+# IDE
+.vscode/
+.idea/
+
 # OS
 .DS_Store
 Thumbs.db

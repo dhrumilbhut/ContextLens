@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+celery[redis]
+asyncpg
+redis
+pydantic-settings
+alembic
+sqlalchemy[asyncio]
+python-dotenv
+pgvector
+openai>=1.0.0
+numpy>=1.26.0
+scikit-learn>=1.4.0

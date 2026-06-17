@@ -71,27 +71,43 @@ cp .env.example .env
 # 3. run
 docker-compose up
 
+# 4. run migrations (first time only)
+docker-compose exec api alembic upgrade head
+
 # dashboard is now at http://localhost:3000
 # API is now at http://localhost:8000
 ```
 
-Then in your RAG app:
+**Step 1: Create a project in the dashboard**
+
+Open `http://localhost:3000`, click "New project", give it a name.
+
+**Step 2: Generate an API key**
+
+In your project, go to API Keys and create a key. Copy it — shown once.
+
+**Step 3: Send a trace**
 
 ```bash
-pip install contextlens
+curl -X POST http://localhost:8000/ingest \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the refund policy?",
+    "chunks": [{
+      "content": "Refunds are processed within 30 business days of purchase.",
+      "source": "refund-policy.pdf",
+      "chunk_index": 0
+    }],
+    "response": "Your refund will be processed in 30 days."
+  }'
 ```
 
-```python
-import contextlens
+The API returns immediately with a `trace_id`. Processing runs in the background (5–10 seconds).
 
-with contextlens.trace(query=user_query) as trace:
-    chunks = your_retriever.fetch(user_query)
-    trace.log_chunks(chunks)
-    response = your_llm.generate(chunks, user_query)
-    trace.log_response(response)
-```
+**Step 4: See the results**
 
-Open `http://localhost:3000` and see your traces.
+Open `http://localhost:3000` → your project → Traces. Click the trace to see per-claim attribution: which claims were faithfully represented, which were misrepresented, and which had no source chunk at all.
 
 ---
 
