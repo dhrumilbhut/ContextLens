@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+sdk-validation/.env
+mini-rag-app/.env
+mini-rag-app/corpus_embeddings.json
+mini-rag-app/queries_run.json
 
 # Claude Code
 .claude/
