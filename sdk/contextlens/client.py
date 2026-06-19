@@ -2,6 +2,8 @@ import logging
 
 import httpx
 
+from contextlens.stats import _record_attempt, _record_result
+
 logger = logging.getLogger("contextlens")
 
 
@@ -12,11 +14,11 @@ def send_trace(payload: dict, api_url: str, api_key: str, timeout: float) -> Non
     logged at DEBUG level so it stays invisible by default but is inspectable
     when a developer sets logging.getLogger("contextlens").setLevel(logging.DEBUG).
 
-    Choosing DEBUG over total silence is a deliberate trade-off: "fails silently"
-    and "fails silently but is debuggable on request" are both safe, and the
-    second is strictly better for self-hosted developer tooling where the
-    developer owns the process and can inspect logs if something seems wrong.
+    Stats counters are updated from inside this thread — zero overhead on the
+    caller's code path. attempted increments before the HTTP call; delivered/failed
+    increment after the result is known.
     """
+    _record_attempt()
     try:
         with httpx.Client(timeout=timeout) as client:
             client.post(
@@ -24,5 +26,7 @@ def send_trace(payload: dict, api_url: str, api_key: str, timeout: float) -> Non
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
             )
+        _record_result(success=True)
     except Exception:
+        _record_result(success=False)
         logger.debug("ContextLens: failed to send trace", exc_info=True)

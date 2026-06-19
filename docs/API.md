@@ -16,12 +16,16 @@ Cloud (future):       https://api.contextlens.dev
 ## Auth Model (Self-Hosted)
 
 ```
-POST /ingest              → Authorization: Bearer <local_api_key>
+POST /ingest              → Authorization: Bearer <project_api_key>
 All other routes          → No auth required (localhost assumption)
 ```
 
-The local API key is set in `.env` as `CONTEXTLENS_LOCAL_API_KEY`
-and in the SDK's environment as `CONTEXTLENS_API_KEY`.
+Project API keys are generated through the dashboard (Settings > API Keys)
+or via `POST /projects/{id}/api-keys`. The raw key is shown once at creation
+and never again — only the SHA256 hash is stored. Keys are prefixed with `cl_`.
+
+Set the key in the SDK with the `CONTEXTLENS_API_KEY` environment variable
+or by calling `contextlens.configure(api_key="cl_...")` directly.
 
 When the cloud version is added, management routes will require
 `Authorization: Bearer <jwt_access_token>`. See `CLOUD_FUTURE.md`.
@@ -195,9 +199,18 @@ Receive a trace from the SDK. Stores it and enqueues for processing.
 }
 ```
 
-**Response 401:** Invalid API key
+**Response 401:** Invalid or revoked API key
+```json
+{ "detail": "Invalid API key" }
+```
 
-**Response 429:** Rate limit exceeded
+**Response 429:** Per-minute or per-hour rate limit exceeded
+```json
+{ "detail": "Rate limit exceeded: too many requests per minute" }
+```
+Rate limits are configured via `PER_MINUTE_RATE_LIMIT` and `HOURLY_INGEST_RATE_LIMIT` in `.env`.
+The daily processing limit does **not** return 429 — traces are always accepted and stored
+with `status: pending`; processing is deferred until the next day's limit resets.
 
 ---
 
@@ -212,8 +225,6 @@ List recent traces with summary info.
 - `offset` (default: 0)
 - `status` — `pending` | `processing` | `processed` | `failed`
 - `min_faithfulness` — float 0.0–1.0
-- `from` — ISO date
-- `to` — ISO date
 
 **Response 200:**
 ```json
@@ -258,16 +269,55 @@ Full trace detail with all claims and attribution.
         "chunk_content": "Returns must be initiated within 30 days of purchase.",
         "source_document": "refund-policy.pdf",
         "chunk_index": 1,
-        "attribution_score": 0.91
+        "attribution_score": 0.91,
+        "confidence": "high"
       },
       "faithfulness_verdict": "partial",
       "faithfulness_score": 0.6,
       "is_faithful": false,
-      "judge_reasoning": "The chunk says 'initiate a return within 30 days' but the claim states the refund is processed within 30 days — these are different things."
+      "judge_reasoning": "[source: \"Returns must be initiated within 30 days of purchase.\"] The chunk says 'initiate a return' but the claim states the refund is 'processed' within 30 days — these are different things."
+    },
+    {
+      "id": "cl_def456",
+      "claim_text": "Cancellations require 7 days notice before the next billing cycle.",
+      "claim_index": 1,
+      "attribution": {
+        "chunk_id": "ch_def456",
+        "chunk_content": "Subscription cancellations must be submitted at least 7 business days before the next billing cycle.",
+        "source_document": "terms-of-service.pdf",
+        "chunk_index": 2,
+        "attribution_score": 0.71,
+        "confidence": "low"
+      },
+      "faithfulness_verdict": "partial",
+      "faithfulness_score": 0.7,
+      "is_faithful": false,
+      "judge_reasoning": "[source: \"...must be submitted at least 7 business days...\"] The claim drops the qualifier 'business' from '7 business days'."
+    },
+    {
+      "id": "cl_ghi789",
+      "claim_text": "No information about enterprise pricing was found in the provided context.",
+      "claim_index": 2,
+      "attribution": null,
+      "faithfulness_verdict": "refusal",
+      "faithfulness_score": null,
+      "is_faithful": null,
+      "judge_reasoning": "LLM correctly declined to answer — no relevant context was retrieved."
     }
   ]
 }
 ```
+
+**`faithfulness_verdict` values:**
+- `faithful` — claim accurately reflects the attributed source chunk
+- `partial` — claim was attributed but contains an inaccuracy (qualifier dropped, number changed, etc.)
+- `unfaithful` — no source chunk was found (retrieval failure); `attribution` is null
+- `refusal` — the LLM explicitly declined to answer because the retrieved context did not cover the question. For refusal claims: `attribution` is null, `faithfulness_score` is null, `is_faithful` is null, and `judge_reasoning` holds the fixed string `"LLM correctly declined to answer — no relevant context was retrieved."` rather than LLM-generated reasoning. Refusals are distinct from hallucinations — both show null attribution, but a refusal means the system is working correctly.
+
+**`attribution.confidence` values:**
+- `high` — attribution score >= 0.75; clear match
+- `low` — attribution score 0.65–0.74; real source found but match is less certain; claim still goes through the faithfulness judge
+- `null` (field absent or attribution object null) — no source found above threshold
 
 ---
 

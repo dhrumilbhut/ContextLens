@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ContextLens — RAG Failure Diagnosis for Developers</title>
+  <meta name="description" content="ContextLens tells you whether your RAG system failed to find the right document, or found it and the AI misrepresented it. Self-hosted, open source, no signup." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ============================================================
+       Reset + Base
+    ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #080b10;
+      --bg-card:      #0e1218;
+      --bg-surface:   #131820;
+      --border:       #1c2130;
+      --border-mid:   #222b3a;
+      --text-1:       #eef1f7;
+      --text-2:       #8893a6;
+      --text-3:       #4e5a6e;
+      --accent:       #6366f1;
+      --accent-dim:   rgba(99,102,241,0.12);
+      --accent-ring:  rgba(99,102,241,0.22);
+      --accent-hover: #5557e3;
+      --green:        #22c55e;
+      --amber:        #f59e0b;
+      --red:          #ef4444;
+
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace;
+      --max-w: 1100px;
+      --gap:   120px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text-1);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; }
+
+    /* ============================================================
+       Layout helpers
+    ============================================================ */
+    .wrap {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ============================================================
+       NAV
+    ============================================================ */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(8,11,16,0.80);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      text-decoration: none;
+    }
+
+    /* The "CL" logomark — a square bracket motif */
+    .logomark {
+      width: 30px;
+      height: 30px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .logomark svg { width: 16px; height: 16px; }
+
+    .logo-name {
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--text-1);
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 15px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-mid);
+      border-radius: 8px;
+      color: var(--text-2);
+      font-size: 13.5px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .btn-ghost:hover {
+      border-color: #2e3a50;
+      background: #181e2b;
+      color: var(--text-1);
+    }
+
+    .btn-ghost svg { flex-shrink: 0; }
+
+    /* ============================================================
+       HERO
+    ============================================================ */
+    .hero {
+      padding-top: 96px;
+      text-align: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 13px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-ring);
+      border-radius: 100px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #a5b4fc;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 30px;
+    }
+
+    .eyebrow-dot {
+      width: 6px; height: 6px;
+      background: #6366f1;
+      border-radius: 50%;
+    }
+
+    .hero-h1 {
+      font-size: clamp(2.1rem, 4.8vw, 3.4rem);
+      font-weight: 720;
+      line-height: 1.1;
+      letter-spacing: -0.035em;
+      color: var(--text-1);
+      max-width: 760px;
+      margin: 0 auto 22px;
+    }
+
+    .hero-h1 .hl {
+      /* subtle gradient highlight for the core distinction */
+      background: linear-gradient(90deg, #818cf8, #a5b4fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: 1.1rem;
+      color: var(--text-2);
+      max-width: 580px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 68px;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 22px;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14.5px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.12s;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 22px;
+      background: transparent;
+      border: 1px solid var(--border-mid);
+      border-radius: 10px;
+      color: var(--text-2);
+      font-size: 14.5px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .btn-secondary:hover {
+      border-color: #2e3a50;
+      color: var(--text-1);
+    }
+
+    /* ============================================================
+       PRODUCT MOCKUP (hero visual)
+       A faithful HTML recreation of the real claim-card view.
+       Data source: verified trace example from README.md,
+       consistent with build-log.md validation results.
+    ============================================================ */
+    .mockup-wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--border-mid);
+      box-shadow:
+        0 0 0 1px var(--border),
+        0 50px 100px rgba(0,0,0,0.65),
+        0 25px 50px rgba(0,0,0,0.45);
+    }
+
+    .mockup-img {
+      width: 100%;
+      display: block;
+    }
+
+    /* Browser chrome */
+    .chrome {
+      height: 42px;
+      background: #14192a;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .chrome-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .chrome-dot {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+    }
+    .chrome-dot:nth-child(1) { background: #ff5f57; }
+    .chrome-dot:nth-child(2) { background: #ffbd2e; }
+    .chrome-dot:nth-child(3) { background: #28c840; }
+
+    .chrome-url {
+      flex: 1;
+      background: #0a0e18;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 11.5px;
+      font-family: var(--font-mono);
+      color: var(--text-3);
+      gap: 6px;
+    }
+
+    .chrome-url-lock {
+      flex-shrink: 0;
+      width: 10px; height: 10px;
+      opacity: 0.4;
+    }
+
+    /* Dashboard interior — light mode matching actual Next.js dashboard */
+    .dash {
+      background: #f3f4f6;
+      display: flex;
+      min-height: 380px;
+    }
+
+    /* Sidebar nav strip */
+    .dash-sidebar {
+      width: 176px;
+      flex-shrink: 0;
+      background: #ffffff;
+      border-right: 1px solid #e5e7eb;
+      padding: 16px 10px;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 8px;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-brand-mark {
+      width: 20px; height: 20px;
+      background: #6366f1;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-brand-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: -0.02em;
+    }
+
+    .sidebar-section {
+      font-size: 10px;
+      font-weight: 700;
+      color: #9ca3af;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 0 8px;
+      margin-bottom: 4px;
+      margin-top: 10px;
+    }
+
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #6b7280;
+      cursor: default;
+    }
+
+    .sidebar-item.active {
+      background: #f3f4f6;
+      color: #111827;
+      font-weight: 600;
+    }
+
+    .sidebar-icon {
+      width: 14px; height: 14px;
+      opacity: 0.5;
+    }
+
+    .sidebar-item.active .sidebar-icon {
+      opacity: 1;
+      color: #6366f1;
+    }
+
+    /* Main content area */
+    .dash-content {
+      flex: 1;
+      padding: 22px 24px;
+      min-width: 0;
+    }
+
+    .dash-crumb {
+      font-size: 11.5px;
+      color: #9ca3af;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dash-crumb-sep { color: #d1d5db; }
+    .dash-crumb-current { color: #374151; font-weight: 500; }
+
+    /* Query block */
+    .dash-query-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #9ca3af;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .dash-query-box {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #111827;
+      font-weight: 500;
+      margin-bottom: 18px;
+    }
+
+    /* Claims summary bar */
+    .claims-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+
+    .bar-total { color: #374151; }
+    .bar-dot { color: #d1d5db; }
+    .bar-faithful { color: #16a34a; }
+    .bar-generation { color: #7c3aed; }
+    .bar-retrieval { color: #c2410c; }
+
+    /* Claim cards */
+    .claims-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cc {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-left: 4px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .cc.green  { border-left-color: #22c55e; }
+    .cc.yellow { border-left-color: #eab308; }
+    .cc.red    { border-left-color: #ef4444; }
+
+    .cc-inner { padding: 12px 14px; }
+
+    .cc-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .cc-left {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .cc-num {
+      flex-shrink: 0;
+      width: 19px; height: 19px;
+      border-radius: 50%;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #6b7280;
+      margin-top: 1px;
+    }
+
+    .cc-text {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #111827;
+      line-height: 1.45;
+    }
+
+    /* Verdict badge */
+    .vbadge {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 100px;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .vbadge.faithful   { background: #dcfce7; color: #15803d; }
+    .vbadge.partial    { background: #fef9c3; color: #a16207; }
+    .vbadge.unfaithful { background: #fee2e2; color: #b91c1c; }
+
+    /* Failure type badges */
+    .fbadge {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 9px;
+      margin-left: 28px;
+    }
+
+    .fbadge.generation {
+      background: #f5f3ff;
+      border: 1px solid #ddd6fe;
+    }
+
+    .fbadge.retrieval {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+    }
+
+    .fbadge-label {
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+
+    .fbadge.generation .fbadge-label { color: #6d28d9; }
+    .fbadge.retrieval  .fbadge-label { color: #9a3412; }
+
+    .fbadge-desc {
+      font-size: 10.5px;
+      line-height: 1.4;
+      margin-top: 1px;
+    }
+
+    .fbadge.generation .fbadge-desc { color: #7c3aed; }
+    .fbadge.retrieval  .fbadge-desc { color: #c2410c; }
+
+    /* Attribution row */
+    .cc-attr {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: #6b7280;
+      margin-left: 28px;
+      margin-bottom: 8px;
+    }
+
+    .attr-source {
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .attr-sep { color: #d1d5db; }
+
+    /* No-source indicator */
+    .cc-nosource {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #9ca3af;
+      margin-left: 28px;
+      margin-bottom: 8px;
+    }
+
+    /* Judge reasoning */
+    .judge-block {
+      background: #f9fafb;
+      border-radius: 6px;
+      padding: 9px 12px;
+      margin-left: 28px;
+    }
+
+    .judge-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 5px;
+    }
+
+    .judge-quote {
+      font-size: 11.5px;
+      color: #6b7280;
+      font-style: italic;
+      margin-bottom: 3px;
+      line-height: 1.4;
+    }
+
+    .judge-text {
+      font-size: 11.5px;
+      color: #374151;
+      line-height: 1.5;
+    }
+
+    /* ============================================================
+       PROBLEM SECTION
+    ============================================================ */
+    .problem {
+      padding-top: var(--gap);
+    }
+
+    .problem-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+    }
+
+    .section-tag {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .section-h2 {
+      font-size: clamp(1.7rem, 2.8vw, 2.2rem);
+      font-weight: 720;
+      letter-spacing: -0.028em;
+      line-height: 1.2;
+      margin-bottom: 18px;
+    }
+
+    .section-p {
+      font-size: 1rem;
+      color: var(--text-2);
+      line-height: 1.75;
+      margin-bottom: 14px;
+    }
+
+    .section-p:last-child { margin-bottom: 0; }
+
+    /* Problem side visual: two cause-cards */
+    .cause-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .cause-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-mid);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .cause-type {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .cause-type.retrieval { color: #fb923c; }
+    .cause-type.generation { color: #c084fc; }
+
+    .cause-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--text-1);
+      margin-bottom: 6px;
+    }
+
+    .cause-desc {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+
+    .cause-fix {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .cause-fix.retrieval { color: #fb923c; }
+    .cause-fix.generation { color: #c084fc; }
+
+    .vs-label {
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-3);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 0;
+    }
+
+    /* ============================================================
+       HOW IT WORKS
+    ============================================================ */
+    .how {
+      padding-top: var(--gap);
+    }
+
+    .how-header {
+      max-width: 560px;
+      margin-bottom: 52px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .step {
+      background: var(--bg-card);
+      border: 1px solid var(--border-mid);
+      border-radius: 12px;
+      padding: 22px;
+      position: relative;
+    }
+
+    /* Connector line between steps (desktop) */
+    .step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      right: -8px;
+      top: 35px;
+      width: 14px;
+      height: 1px;
+      background: var(--border-mid);
+    }
+
+    .step-num {
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-ring);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #a5b4fc;
+      margin-bottom: 14px;
+    }
+
+    .step-title {
+      font-size: 14.5px;
+      font-weight: 650;
+      color: var(--text-1);
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .step-desc {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.6;
+    }
+
+    /* ============================================================
+       THE DISTINCTION
+    ============================================================ */
+    .distinction {
+      padding-top: var(--gap);
+    }
+
+    .distinction-header {
+      max-width: 560px;
+      margin-bottom: 52px;
+    }
+
+    .dist-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .dist-card {
+      border-radius: 14px;
+      padding: 30px;
+    }
+
+    .dist-card.before {
+      background: var(--bg-card);
+      border: 1px solid var(--border-mid);
+    }
+
+    .dist-card.after {
+      background: linear-gradient(140deg, #0d1326 0%, #111827 100%);
+      border: 1px solid rgba(99,102,241,0.28);
+      box-shadow: 0 0 50px rgba(99,102,241,0.07);
+    }
+
+    .dist-label {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+    }
+
+    .dist-card.before .dist-label { color: var(--text-3); }
+    .dist-card.after  .dist-label { color: #818cf8; }
+
+    /* The big "0.6" score display */
+    .score-display {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .score-key {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-3);
+    }
+
+    .score-val {
+      font-family: var(--font-mono);
+      font-size: 42px;
+      font-weight: 500;
+      color: var(--text-3);
+      line-height: 1;
+    }
+
+    .score-hint {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text-3);
+      line-height: 1.65;
+    }
+
+    /* After: claim-level breakdown */
+    .dist-claim {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 9px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+
+    .dist-claim-text {
+      font-size: 12.5px;
+      color: var(--text-2);
+      margin-bottom: 7px;
+      line-height: 1.45;
+    }
+
+    .dist-claim-text strong {
+      color: var(--text-1);
+      font-weight: 600;
+    }
+
+    .dist-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 100px;
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+
+    .dist-tag.retrieval {
+      background: rgba(249,115,22,0.14);
+      color: #fb923c;
+      border: 1px solid rgba(249,115,22,0.25);
+    }
+
+    .dist-tag.generation {
+      background: rgba(168,85,247,0.14);
+      color: #c084fc;
+      border: 1px solid rgba(168,85,247,0.25);
+    }
+
+    .dist-fix {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 5px;
+    }
+
+    .dist-fix span {
+      font-weight: 700;
+    }
+
+    .dist-fix.retrieval span { color: #fb923c; }
+    .dist-fix.generation span { color: #c084fc; }
+
+    /* ============================================================
+       BUILT IN THE OPEN
+    ============================================================ */
+    .open {
+      padding-top: var(--gap);
+    }
+
+    .open-inner {
+      background: var(--bg-card);
+      border: 1px solid var(--border-mid);
+      border-radius: 16px;
+      padding: 40px 48px;
+      display: flex;
+      align-items: flex-start;
+      gap: 40px;
+    }
+
+    .open-icon {
+      flex-shrink: 0;
+      width: 44px; height: 44px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-ring);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .open-text h3 {
+      font-size: 17px;
+      font-weight: 650;
+      color: var(--text-1);
+      margin-bottom: 10px;
+      letter-spacing: -0.015em;
+    }
+
+    .open-text p {
+      font-size: 14.5px;
+      color: var(--text-2);
+      line-height: 1.7;
+      max-width: 620px;
+    }
+
+    /* ============================================================
+       FOOTER CTA
+    ============================================================ */
+    .footer-cta {
+      padding-top: var(--gap);
+      padding-bottom: 80px;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      margin-top: var(--gap);
+    }
+
+    .footer-h2 {
+      font-size: clamp(1.6rem, 3vw, 2.25rem);
+      font-weight: 720;
+      letter-spacing: -0.03em;
+      margin-bottom: 14px;
+    }
+
+    .footer-sub {
+      font-size: 15px;
+      color: var(--text-2);
+      margin-bottom: 28px;
+    }
+
+    .sh-list {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      margin-bottom: 36px;
+      flex-wrap: wrap;
+    }
+
+    .sh-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13.5px;
+      color: var(--text-2);
+    }
+
+    .sh-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+    }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 52px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-3);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .footer-links a:hover { color: var(--text-2); }
+
+    .footer-sep {
+      color: var(--border-mid);
+    }
+
+    /* ============================================================
+       Animations — applied selectively, not uniformly
+    ============================================================ */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero-eyebrow-anim { animation: fadeUp 0.5s ease both; }
+    .hero-h1-anim      { animation: fadeUp 0.6s ease 0.06s both; }
+    .hero-sub-anim     { animation: fadeUp 0.6s ease 0.12s both; }
+    .hero-cta-anim     { animation: fadeUp 0.6s ease 0.18s both; }
+    .hero-mockup-anim  { animation: fadeUp 0.8s ease 0.28s both; }
+
+    /* ============================================================
+       RESPONSIVE
+    ============================================================ */
+    @media (max-width: 960px) {
+      .steps { grid-template-columns: repeat(2, 1fr); }
+      .step::after { display: none; }
+    }
+
+    @media (max-width: 800px) {
+      .problem-inner {
+        grid-template-columns: 1fr;
+        gap: 40px;
+      }
+      .cause-cards { display: none; } /* problem text is self-contained */
+      .dist-grid { grid-template-columns: 1fr; }
+      .open-inner {
+        flex-direction: column;
+        gap: 20px;
+        padding: 28px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      :root { --gap: 80px; }
+      .steps { grid-template-columns: 1fr; }
+      .chrome-url { display: none; }
+      .dash-sidebar { display: none; }
+      .hero { padding-top: 60px; }
+      .logo-name { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ============================================================
+     NAV
+============================================================ -->
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="logo">
+      <div class="logomark">
+        <!-- Simple bracket-lens icon -->
+        <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round">
+          <path d="M5 2L2 8l3 6" />
+          <path d="M11 2l3 6-3 6" />
+          <circle cx="8" cy="8" r="2" fill="white" stroke="none"/>
+        </svg>
+      </div>
+      <span class="logo-name">ContextLens</span>
+    </a>
+    <div class="nav-right">
+      <a href="https://github.com/dhrumilbhut/ContextLens" class="btn-ghost" target="_blank" rel="noopener">
+        <!-- GitHub icon -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+        </svg>
+        View on GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============================================================
+     HERO
+============================================================ -->
+<section class="hero">
+  <div class="wrap">
+
+    <div class="eyebrow hero-eyebrow-anim">
+      <span class="eyebrow-dot"></span>
+      Self-hosted &nbsp;·&nbsp; Open source &nbsp;·&nbsp; No signup
+    </div>
+
+    <h1 class="hero-h1 hero-h1-anim">
+      Retrieval failure or generation failure?<br>
+      <span class="hl">ContextLens tells you which one.</span>
+    </h1>
+
+    <p class="hero-sub hero-sub-anim">
+      A wrong answer from your RAG system either means the right document was never retrieved
+      — or it was retrieved and the AI misrepresented it. These need completely different fixes.
+      No other tool makes this distinction.
+    </p>
+
+    <div class="hero-actions hero-cta-anim">
+      <a href="https://github.com/dhrumilbhut/ContextLens" class="btn-primary" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+        </svg>
+        View on GitHub
+      </a>
+      <a href="https://github.com/dhrumilbhut/ContextLens/blob/main/README.md" class="btn-secondary" target="_blank" rel="noopener">
+        Read the docs
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+      </a>
+    </div>
+
+    <div class="mockup-wrap hero-mockup-anim">
+
+      <!-- Browser chrome -->
+      <div class="chrome">
+        <div class="chrome-dots">
+          <div class="chrome-dot"></div>
+          <div class="chrome-dot"></div>
+          <div class="chrome-dot"></div>
+        </div>
+        <div class="chrome-url">
+          <svg class="chrome-url-lock" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M9 5V4a3 3 0 10-6 0v1H2v6h8V5H9zM5 4a1 1 0 112 0v1H5V4z"/>
+          </svg>
+          localhost:3000 / projects / customer-support-bot / traces / tr_a8f3c2d1
+        </div>
+      </div>
+
+      <img src="assets/trace-detail-screenshot.png"
+           alt="ContextLens trace detail page showing claim-level attribution with retrieval and generation failure distinction"
+           class="mockup-img">
+
+    </div><!-- /mockup-wrap -->
+
+  </div>
+</section>
+
+<!-- ============================================================
+     THE PROBLEM
+============================================================ -->
+<section class="problem">
+  <div class="wrap">
+    <div class="problem-inner">
+
+      <div class="problem-text">
+        <div class="section-tag">The Problem</div>
+        <h2 class="section-h2">Both failures look identical from the outside.</h2>
+        <p class="section-p">
+          You've built a RAG system. Sometimes the LLM gives a wrong answer. You open
+          your observability tool and see: <strong style="color: var(--text-1); font-family: var(--font-mono); font-size: 0.9em;">faithfulness: 0.6</strong>.
+          Now what?
+        </p>
+        <p class="section-p">
+          That number tells you something went wrong. It doesn't tell you whether
+          the right document was never fetched — in which case you fix your search —
+          or whether it was fetched and the AI ignored what it said — in which case
+          you fix your prompt. Those are completely different problems.
+        </p>
+        <p class="section-p">
+          Current tools measure. ContextLens diagnoses. Every flagged claim
+          comes with a category: retrieval failure or generation failure.
+          You always know which problem you have before you touch anything.
+        </p>
+      </div>
+
+      <div class="cause-cards">
+        <div class="cause-card">
+          <div class="cause-type retrieval">Retrieval Failure</div>
+          <div class="cause-title">The right document was never fetched.</div>
+          <div class="cause-desc">
+            The retriever returned wrong or irrelevant chunks. The LLM had
+            no source to work from and generated from training data instead.
+          </div>
+          <div class="cause-fix retrieval">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+            Fix the search, chunking, or embedding strategy.
+          </div>
+        </div>
+
+        <div class="vs-label">— vs —</div>
+
+        <div class="cause-card">
+          <div class="cause-type generation">Generation Failure</div>
+          <div class="cause-title">The right document was there. The AI misrepresented it.</div>
+          <div class="cause-desc">
+            The correct chunk was retrieved. The LLM dropped a qualifier,
+            changed a number, or softened language. A subtle misrepresentation
+            that can be caught claim by claim.
+          </div>
+          <div class="cause-fix generation">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+            Fix the prompt or model configuration.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     HOW IT WORKS
+============================================================ -->
+<section class="how">
+  <div class="wrap">
+    <div class="how-header">
+      <div class="section-tag">How It Works</div>
+      <h2 class="section-h2">Four steps. One clear answer.</h2>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-title">Decompose</div>
+        <div class="step-desc">
+          Every LLM response is broken into atomic, self-contained claims.
+          A response with three facts becomes three independently verifiable statements.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-title">Attribute</div>
+        <div class="step-desc">
+          Each claim is compared via vector similarity to every retrieved
+          chunk. The closest matching chunk is linked — or the claim is flagged
+          as having no source.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-title">Score</div>
+        <div class="step-desc">
+          For attributed claims, an LLM judge checks whether the AI accurately
+          represented the source. It catches dropped qualifiers, changed numbers,
+          softened certainty — with a plain-English explanation.
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-title">Surface</div>
+        <div class="step-desc">
+          Every claim shows you exactly which failure you have: the document
+          was never found (fix search) or it was found and misrepresented
+          (fix the prompt). Never a single conflated score.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     THE DISTINCTION, MADE CONCRETE
+============================================================ -->
+<section class="distinction">
+  <div class="wrap">
+    <div class="distinction-header">
+      <div class="section-tag">The Distinction</div>
+      <h2 class="section-h2">From a number to a decision.</h2>
+    </div>
+
+    <div class="dist-grid">
+
+      <!-- Before -->
+      <div class="dist-card before">
+        <div class="dist-label">Other tools give you</div>
+        <div class="score-display">
+          <span class="score-key">faithfulness:</span>
+          <span class="score-val">0.6</span>
+        </div>
+        <div class="score-hint">
+          Something is wrong. You don't know what. You don't know whether to
+          improve your retriever or rewrite your prompt. You guess, make a
+          change, and wait to see if the number moves.
+        </div>
+      </div>
+
+      <!-- After -->
+      <div class="dist-card after">
+        <div class="dist-label">ContextLens tells you</div>
+
+        <div class="dist-claim">
+          <div class="dist-claim-text">
+            <strong>Claim 3</strong> has no source chunk.
+          </div>
+          <div class="dist-tag retrieval">&#9679; Retrieval Failure</div>
+          <div class="dist-fix retrieval">
+            <span>Fix the search.</span> That document was never fetched for this query type.
+          </div>
+        </div>
+
+        <div class="dist-claim">
+          <div class="dist-claim-text">
+            <strong>Claims 1–2</strong> were retrieved correctly. The AI dropped
+            "business" from "7 business days."
+          </div>
+          <div class="dist-tag generation">&#9679; Generation Failure</div>
+          <div class="dist-fix generation">
+            <span>Fix the prompt.</span> The source was there. The model misrepresented it.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     BUILT IN THE OPEN
+============================================================ -->
+<section class="open">
+  <div class="wrap">
+    <div class="open-inner">
+      <div class="open-icon">
+        <svg width="22" height="22" fill="none" stroke="#818cf8" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
+        </svg>
+      </div>
+      <div class="open-text">
+        <h3>Built and validated against a real RAG app — not synthetic benchmarks.</h3>
+        <p>
+          The attribution threshold was initially calibrated on near-verbatim test data. When run
+          against an actual policy-document RAG system, correctly sourced claims were being
+          miscategorized as retrieval failures because real LLM paraphrases score differently than
+          verbatim extractions. The fix — a three-band confidence model — came from specific
+          evidence from specific traces, not guesswork. Every calibration decision is documented
+          in the build log with the exact claim texts and similarity scores that drove it.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     FOOTER CTA
+============================================================ -->
+<div class="footer-cta">
+  <div class="wrap">
+    <h2 class="footer-h2">Self-hosted. Open source. Ready now.</h2>
+    <p class="footer-sub">
+      Clone the repo, add your OpenAI key, run <code style="font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px;">docker compose up</code>, and start diagnosing.
+    </p>
+
+    <div class="sh-list">
+      <div class="sh-item">
+        <div class="sh-dot"></div>
+        Your data never leaves your infrastructure
+      </div>
+      <div class="sh-item">
+        <div class="sh-dot"></div>
+        Bring your own OpenAI API key
+      </div>
+      <div class="sh-item">
+        <div class="sh-dot"></div>
+        No signup, no account, no pricing
+      </div>
+    </div>
+
+    <a href="https://github.com/dhrumilbhut/ContextLens" class="btn-primary" target="_blank" rel="noopener" style="font-size: 15px; padding: 13px 28px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+      </svg>
+      View on GitHub
+    </a>
+
+    <div class="footer-links">
+      <a href="https://github.com/dhrumilbhut/ContextLens/blob/main/README.md">Documentation</a>
+      <span class="footer-sep">·</span>
+      <a href="https://github.com/dhrumilbhut/ContextLens/blob/main/build-log.md">Build Log</a>
+      <span class="footer-sep">·</span>
+      <a href="https://github.com/dhrumilbhut/ContextLens/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+      <span class="footer-sep">·</span>
+      <span style="color: var(--text-3);">MIT License</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

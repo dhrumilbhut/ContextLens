@@ -30,8 +30,15 @@ out/
 npm-debug.log*
 yarn-error.log
 
+# VitePress docs site build output
+docs-site/.vitepress/dist/
+docs-site/.vitepress/cache/
+
 # Alembic
 backend/alembic/versions/*.pyc
+
+# Celery Beat runtime schedule database (binary, changes on every run)
+backend/celerybeat-schedule
 
 # IDE
 .vscode/

@@ -1,3 +1,11 @@
+> **Archived — pre-build document.**
+> This was written before any code existed, to solicit early feedback on
+> the product idea. Timelines and feature descriptions below reflect the
+> original plan, not the current state of the project. See the project
+> root `README.md` for what was actually built.
+
+---
+
 # ContextLens — Product Overview
 
 > *I'm building this product and would love your honest feedback on the idea before I go further. No technical background needed to review this — just read and tell me what you think.*

@@ -1,8 +1,13 @@
 """
 Celery tasks for the ContextLens attribution pipeline.
 
-process_trace is the only task in Phase 1.
-It runs the full attribution pipeline: decompose → embed → attribute → judge.
+process_trace runs the full attribution pipeline: decompose → embed → attribute → judge.
+
+Changes in 0006 session:
+  - attribute_claim now returns (chunk_idx, score, confidence) — 3-tuple
+  - Low-confidence claims (0.65-0.75) get a real chunk_id and go through the judge
+  - Refusal claims (is_refusal=True from decomposer) skip attribution and judge entirely
+  - attribution_confidence column is now written for every claim
 """
 
 import asyncio
@@ -78,36 +83,40 @@ async def _process_trace(conn: asyncpg.Connection, trace_id: str) -> None:
         trace_id,
     )
 
-    # retrieved_chunks is JSONB — asyncpg returns it as a Python list
     retrieved_chunks = row["retrieved_chunks"]
     if isinstance(retrieved_chunks, str):
         retrieved_chunks = json.loads(retrieved_chunks)
 
     project_id = str(row["project_id"]) if row["project_id"] is not None else None
 
-    # 3. Decompose response into atomic claims
-    claims = await decompose_claims(row["llm_response"])
-    logger.info(f"trace {trace_id} | decomposed into {len(claims)} claims")
+    # 3. Decompose response into atomic claims (now returns list[dict])
+    claim_objects = await decompose_claims(row["llm_response"])
+    logger.info(f"trace {trace_id} | decomposed into {len(claim_objects)} claims")
 
-    if not claims:
+    if not claim_objects:
         await conn.execute(
             "UPDATE traces SET status = 'processed' WHERE id = $1::uuid",
             trace_id,
         )
         return
 
-    # 4. Batch embed query + claims + chunk contents in one API call.
-    # query_text is prepended so its embedding is stored for clustering.
+    # Separate refusal claims from factual claims that need embedding
+    # Refusal claims skip embedding, attribution, and judging entirely.
+    factual_claims = [c for c in claim_objects if not c["is_refusal"]]
+    refusal_claims = [(i, c) for i, c in enumerate(claim_objects) if c["is_refusal"]]
+
+    # 4. Batch embed query + factual claims + chunk contents in one API call.
     chunk_texts = [c["content"] for c in retrieved_chunks]
-    all_texts = [row["query_text"]] + claims + chunk_texts
+    factual_texts = [c["claim_text"] for c in factual_claims]
+    all_texts = [row["query_text"]] + factual_texts + chunk_texts
     all_embeddings = await embed_texts(all_texts)
     query_embedding = all_embeddings[0]
-    claim_embeddings = all_embeddings[1: 1 + len(claims)]
-    chunk_embeddings = all_embeddings[1 + len(claims):]
+    claim_embeddings = all_embeddings[1: 1 + len(factual_claims)]
+    chunk_embeddings = all_embeddings[1 + len(factual_claims):]
 
     logger.info(f"trace {trace_id} | embedded {len(all_texts)} texts")
 
-    # 4b. Store query embedding now — used by the clustering beat job.
+    # 4b. Store query embedding for clustering
     query_emb_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
     await conn.execute(
         "UPDATE traces SET query_embedding = $1::vector WHERE id = $2::uuid",
@@ -130,46 +139,82 @@ async def _process_trace(conn: asyncpg.Connection, trace_id: str) -> None:
 
     logger.info(f"trace {trace_id} | stored {len(chunk_uuids)} chunks")
 
-    # 6. Attribute and judge each claim
-    for claim_index, (claim_text, claim_emb) in enumerate(
-        zip(claims, claim_embeddings)
-    ):
-        chunk_idx, attribution_score = attribute_claim(claim_emb, chunk_embeddings)
+    # 6. Process claims in original order.
+    # Build a map from claim_object index → (claim_embedding index for factual claims)
+    factual_iter = iter(enumerate(zip(factual_claims, claim_embeddings)))
+    factual_emb_map: dict[int, tuple[dict, list[float]]] = {}
+    fi = 0
+    for obj_idx, claim_obj in enumerate(claim_objects):
+        if not claim_obj["is_refusal"]:
+            factual_emb_map[obj_idx] = (claim_obj, claim_embeddings[fi])
+            fi += 1
+
+    for claim_index, claim_obj in enumerate(claim_objects):
+        claim_text = claim_obj["claim_text"]
+        is_refusal = claim_obj["is_refusal"]
+
+        if is_refusal:
+            # Refusal claims: skip attribution and judge — store directly
+            await conn.execute(
+                """
+                INSERT INTO claims (
+                    trace_id, claim_text, claim_index,
+                    attributed_chunk_id, attribution_score, attribution_confidence,
+                    faithfulness_verdict, faithfulness_score,
+                    is_faithful, judge_reasoning
+                ) VALUES (
+                    $1::uuid, $2, $3,
+                    NULL, NULL, NULL,
+                    'refusal', NULL,
+                    NULL, $4
+                )
+                """,
+                trace_id,
+                claim_text,
+                claim_index,
+                "LLM correctly declined to answer — no relevant context was retrieved.",
+            )
+            logger.info(f"trace {trace_id} | claim {claim_index}: refusal (skipping attribution)")
+            continue
+
+        # Factual claim — attribute and judge
+        claim_emb = factual_emb_map[claim_index][1]
+        chunk_idx, attribution_score, confidence = attribute_claim(claim_emb, chunk_embeddings)
 
         if chunk_idx is not None:
+            # Both 'high' and 'low' confidence claims get the judge
             attributed_chunk_id = chunk_uuids[chunk_idx]
             chunk_content = retrieved_chunks[chunk_idx]["content"]
             faith = await score_faithfulness(claim_text, chunk_content)
-            # Include source_quote in judge_reasoning for dashboard auditability
             reasoning = (
                 f'[source: "{faith["source_quote"]}"] {faith["reasoning"]}'
                 if faith.get("source_quote")
                 else faith["reasoning"]
             )
+            verdict = faith["verdict"]
+            faith_score = faith["score"]
+            is_faithful = verdict == "faithful"
         else:
             attributed_chunk_id = None
             attribution_score = None
-            faith = {
-                "verdict": "unfaithful",
-                "score": 0.0,
-                "reasoning": "No source chunk found in retrieved context — retrieval failure.",
-            }
-            reasoning = faith["reasoning"]
-
-        is_faithful = faith["verdict"] == "faithful"
+            confidence = None
+            verdict = "unfaithful"
+            faith_score = 0.0
+            is_faithful = False
+            reasoning = "No source chunk found in retrieved context — retrieval failure."
 
         await conn.execute(
             """
             INSERT INTO claims (
                 trace_id, claim_text, claim_index,
-                attributed_chunk_id, attribution_score,
+                attributed_chunk_id, attribution_score, attribution_confidence,
                 faithfulness_verdict, faithfulness_score,
                 is_faithful, judge_reasoning
             ) VALUES (
                 $1::uuid, $2, $3,
-                $4::uuid, $5,
-                $6, $7,
-                $8, $9
+                $4::uuid, $5, $6,
+                $7, $8,
+                $9, $10
             )
             """,
             trace_id,
@@ -177,15 +222,16 @@ async def _process_trace(conn: asyncpg.Connection, trace_id: str) -> None:
             claim_index,
             attributed_chunk_id,
             attribution_score,
-            faith["verdict"],
-            faith["score"],
+            confidence,
+            verdict,
+            faith_score,
             is_faithful,
             reasoning,
         )
 
-        attr_str = f"{attribution_score:.2f}" if attribution_score is not None else "none"
+        attr_str = f"{attribution_score:.3f} ({confidence})" if attribution_score is not None else "none"
         logger.info(
-            f"trace {trace_id} | claim {claim_index}: {faith['verdict']} (attribution={attr_str})"
+            f"trace {trace_id} | claim {claim_index}: {verdict} (attribution={attr_str})"
         )
 
     # 7. Mark trace as processed

@@ -229,10 +229,12 @@ gets added without changing anything else.
 
 **Job:** Capture RAG pipeline data without affecting performance.
 
-- Non-intrusive — wraps existing code, does not replace it
-- Fire-and-forget — sends data in a background thread, never blocks the RAG app
-- Fails silently — if ContextLens is down, the RAG app continues unaffected
-- Reads `CONTEXTLENS_API_KEY` and `CONTEXTLENS_API_URL` from environment
+- **Non-intrusive** — wraps existing code, does not replace it. Install `pip install -e ./sdk`, add a `with contextlens.trace(query=...) as trace:` block, and the RAG app is unchanged beyond two `trace.log_*` calls inside that block.
+- **Fire-and-forget, measured** — the `with` block exits before the background thread sends anything to `/ingest`. Phase A validation measured: 0.56ms (happy path), 0.31ms (backend unreachable), 0.02ms (SDK disabled via `CONTEXTLENS_ENABLED=false`). Phase D regression check confirmed 0.56–0.59ms after the delivery stats counter was added. The background thread is a daemon thread and never keeps the process alive on exit.
+- **Fails silently, tested** — Phase A Scenario 2 pointed the SDK at an unreachable backend; the daemon thread timed out after `CONTEXTLENS_TIMEOUT=5s` with no exception propagated to the calling code. The RAG app's response was unaffected.
+- **Chunk format normalization** — `log_chunks()` auto-detects and normalizes four input formats via duck-typing: `list[str]`, `list[dict]`, LangChain `Document` objects, and LlamaIndex `NodeWithScore` objects. Neither `langchain` nor `llama-index` is a hard SDK dependency — detection uses `hasattr()` only, so the SDK installs and runs without either package present. Note: the SDK accepts LangChain and LlamaIndex chunk objects passed manually inside a `with` block. It does not yet provide a zero-line LangChain callback handler or LlamaIndex event handler — those require you to call `trace.log_chunks()` explicitly with the chunks your retriever returns.
+- **Reads `CONTEXTLENS_API_KEY` and `CONTEXTLENS_API_URL` from environment** — or via `contextlens.configure(api_key=..., api_url=...)` at runtime. Config is read fresh on each `trace()` call, not cached, so environment variable changes between test scenarios take effect immediately.
+- **`get_stats()` — process-local delivery counter** — `contextlens.get_stats()` returns `{'attempted': N, 'delivered': N, 'failed': N}`. `attempted` increments when a background send starts; `delivered` on any HTTP response; `failed` on network error or timeout. Intended for development batch scripts and spot-checks, not production monitoring — counters reset on process restart.
 
 ---
 

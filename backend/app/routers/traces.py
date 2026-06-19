@@ -134,6 +134,7 @@ async def get_trace(
             c.claim_index,
             c.attributed_chunk_id::text,
             c.attribution_score,
+            c.attribution_confidence,
             c.faithfulness_verdict,
             c.faithfulness_score,
             c.is_faithful,
@@ -159,6 +160,7 @@ async def get_trace(
                 source_document=row["source_document"],
                 chunk_index=row["chunk_index"],
                 attribution_score=float(row["attribution_score"]),
+                confidence=row["attribution_confidence"],
             )
         claims.append(
             ClaimDetail(
@@ -167,7 +169,11 @@ async def get_trace(
                 claim_index=row["claim_index"],
                 attribution=attribution,
                 faithfulness_verdict=row["faithfulness_verdict"],
-                faithfulness_score=float(row["faithfulness_score"]),
+                faithfulness_score=(
+                    float(row["faithfulness_score"])
+                    if row["faithfulness_score"] is not None
+                    else None
+                ),
                 is_faithful=row["is_faithful"],
                 judge_reasoning=row["judge_reasoning"] or "",
             )

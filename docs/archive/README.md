@@ -1,3 +1,13 @@
+> **Archived — superseded README.**
+> This was the project's working README through Phase 4 Part B. It has
+> been superseded by the project root `README.md`, which corrects several
+> inaccuracies that accumulated as the SDK, attribution confidence bands,
+> rate limiting, and clustering were built after this version was last
+> updated. Kept here as a historical snapshot. See the project root
+> `README.md` for current, accurate documentation.
+
+---
+
 # ContextLens
 
 > **ContextLens tells you whether your RAG system failed to find the right document, or found it and the AI ignored it. These need completely different fixes. No current tool makes this distinction.**

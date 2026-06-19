@@ -89,6 +89,8 @@ CREATE TABLE traces (
   status           TEXT NOT NULL DEFAULT 'pending',
                    -- 'pending' | 'processing' | 'processed' | 'failed'
   latency_ms       INTEGER,           -- RAG app's total response time
+  error_message    TEXT,              -- set when status = 'failed', after max retries
+  failed_at        TIMESTAMPTZ,       -- timestamp of final failure
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -162,9 +164,10 @@ CREATE TABLE claims (
   claim_index          INTEGER NOT NULL,    -- order in the response (0, 1, 2...)
   attributed_chunk_id  UUID REFERENCES chunks(id),  -- null = no source found
   attribution_score    FLOAT,               -- cosine similarity (0.0–1.0), null if no match
-  faithfulness_verdict TEXT,               -- 'faithful' | 'partial' | 'unfaithful'
-  faithfulness_score   FLOAT,              -- 0.0–1.0
-  is_faithful          BOOLEAN,            -- simple true/false for filtering
+  attribution_confidence TEXT,             -- 'high' (>= 0.75) | 'low' (0.65–0.74) | null (no match)
+  faithfulness_verdict TEXT,               -- 'faithful' | 'partial' | 'unfaithful' | 'refusal'
+  faithfulness_score   FLOAT,              -- 0.0–1.0, null for refusal claims
+  is_faithful          BOOLEAN,            -- simple true/false for filtering, null for refusal claims
   judge_reasoning      TEXT,               -- LLM judge's explanation
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -180,10 +183,54 @@ It means the LLM generated a claim with no grounding in the retrieved context �
 pure hallucination from training data. Null attribution + unfaithful = the
 clearest hallucination signal we produce.
 
+**Why does `attribution_confidence` exist?**
+Attribution is not binary. The original threshold was 0.75 — below that, no source
+was linked. In practice, real LLM-generated claims that correctly paraphrase a
+multi-sentence source paragraph often score in the 0.65–0.75 range due to embedding
+dilution: the paragraph's embedding vector is pulled toward all its sentences, and a
+single-claim paraphrase of one of them cannot sustain full cosine similarity against
+the whole paragraph. These claims were being miscategorised as retrieval failures even
+when the source was clearly the right document.
+
+The three-band model (migration 0006) resolves this:
+- `'high'` (score >= 0.75) — clear, unambiguous match; existing behaviour unchanged
+- `'low'` (0.65 <= score < 0.75) — real source found, match is less certain; claim still
+  sent through the faithfulness judge, surfaced with an amber "Low confidence match"
+  treatment in the dashboard
+- `NULL` (score < 0.65 or no attribution attempted) — genuine retrieval failure
+
+`attribution_confidence` is NULL for refusal claims (see below) because attribution
+is never attempted for them.
+
+**Why is `faithfulness_verdict` now four values, not three?**
+The fourth value, `'refusal'`, handles the case where the LLM correctly declines to
+answer because the retrieved context does not cover the question. Before this was added,
+correct refusals ("the context does not contain information about X") appeared identical
+to hallucinations in the dashboard — both showed as retrieval failures with no source.
+
+When the decomposer detects a refusal pattern in the LLM response, it sets `is_refusal:
+true` in its JSON output. `is_refusal` is a **transient field** — it is not stored as a
+column anywhere. The pipeline uses it to short-circuit the claim before embedding,
+attribution, and judging. The claim is stored directly with:
+- `faithfulness_verdict = 'refusal'`
+- `faithfulness_score = NULL` (no judge was run)
+- `is_faithful = NULL` (no judge was run)
+- `attributed_chunk_id = NULL` (attribution was skipped)
+- `judge_reasoning = 'LLM correctly declined to answer — no relevant context was retrieved.'`
+  (fixed string, not LLM-generated)
+
+This makes correct refusals distinguishable from hallucinations at the API and dashboard
+level without any schema change — `faithfulness_verdict` had no CHECK constraint, so
+`'refusal'` is a valid fourth value.
+
 **Why store `judge_reasoning`?**
 The LLM judge explains *why* a claim was marked unfaithful, not just that it was.
 "The chunk says 30 business days, the claim omits 'business'" is actionable.
 A score of 0.3 alone is not. The reasoning is what makes the dashboard useful.
+
+For refusal claims, `judge_reasoning` holds the fixed string above rather than
+LLM-generated reasoning. For retrieval failures (null attribution), it holds
+`'No source chunk found in retrieved context — retrieval failure.'`
 
 ---
 
@@ -276,6 +323,22 @@ LIMIT 20;
 
 ---
 
+## Migration History (Self-Hosted)
+
+All six migrations have been applied in the current development environment.
+Run `alembic upgrade head` to apply them on a fresh clone.
+
+| Migration file | What it does |
+|---|---|
+| `0001_initial_schema.py` | Creates all base tables: `projects`, `api_keys`, `traces`, `chunks`, `claims`, `query_clusters`, `usage_records`; enables the pgvector extension |
+| `0002_add_trace_error_fields.py` | Adds `error_message TEXT` and `failed_at TIMESTAMPTZ` to `traces` — dead letter queue columns populated when a task exhausts its Celery retries |
+| `0003_project_id_not_null.py` | Creates the Default Project, backfills Phase 1 null-project rows in `traces` and `chunks`, and makes `project_id NOT NULL` on both tables |
+| `0004_chunks_unique_constraint.py` | Adds `UNIQUE(project_id, content_hash)` to `chunks` — was specified in DATA_MODEL.md but missing from the initial migration; absence masked by a manual SELECT+INSERT workaround in Phase 1 |
+| `0005_query_clusters_unique_constraint.py` | Adds `UNIQUE(project_id, cluster_label)` to `query_clusters` — defensive constraint in case two clusters get the same LLM-generated label in one run |
+| `0006_attribution_confidence.py` | Adds `attribution_confidence TEXT` to `claims`; backfills `'high'` for existing rows with score >= 0.75, `'low'` for 0.65–0.74; rows with null `attribution_score` keep `attribution_confidence = NULL` |
+
+---
+
 ## Cloud Migration Path
 
 When moving to a multi-user cloud version, these additions are made via Alembic migrations:
@@ -315,13 +378,17 @@ A seeded "local user" row gets assigned to all existing projects.
 We use **Alembic** for all schema changes.
 
 ```
-alembic/
+backend/alembic/
   env.py
   versions/
-    0001_initial_schema.py     ← self-hosted schema
-    0002_add_users_auth.py     ← cloud migration (future)
-    ...
+    0001_initial_schema.py                ← all base tables
+    0002_add_trace_error_fields.py        ← dead letter queue columns
+    0003_project_id_not_null.py           ← project scoping enforcement
+    0004_chunks_unique_constraint.py      ← deduplication constraint
+    0005_query_clusters_unique_constraint.py
+    0006_attribution_confidence.py        ← three-band attribution model
 ```
 
 Never alter the schema by hand in production.
 Every change is a versioned, reviewable migration file.
+See "Migration History (Self-Hosted)" above for the full description of each.

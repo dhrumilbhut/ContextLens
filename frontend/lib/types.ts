@@ -9,6 +9,7 @@ export interface AttributionDetail {
   source_document: string;
   chunk_index: number;
   attribution_score: number;
+  confidence: "high" | "low" | null;
 }
 
 export interface ClaimDetail {
@@ -16,9 +17,9 @@ export interface ClaimDetail {
   claim_text: string;
   claim_index: number;
   attribution: AttributionDetail | null;
-  faithfulness_verdict: "faithful" | "partial" | "unfaithful";
-  faithfulness_score: number;
-  is_faithful: boolean;
+  faithfulness_verdict: "faithful" | "partial" | "unfaithful" | "refusal";
+  faithfulness_score: number | null;
+  is_faithful: boolean | null;
   judge_reasoning: string;
 }
 
@@ -50,6 +51,7 @@ export interface TraceListResponse {
 export function getFailureType(
   claim: ClaimDetail
 ): "retrieval" | "generation" | null {
+  if (claim.faithfulness_verdict === "refusal") return null;
   if (claim.is_faithful) return null;
   if (claim.attribution === null) return "retrieval";
   return "generation";

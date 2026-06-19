@@ -41,7 +41,7 @@ Read these in order for a full picture. Each doc is self-contained.
 | `docs/STACK.md` | Every technology choice and the reasoning behind it |
 | `docs/DECISIONS.md` | Key product and architecture decisions with full reasoning |
 | `docs/CLOUD_FUTURE.md` | Exact migration path from self-hosted to cloud SaaS |
-| `PRODUCT_OVERVIEW.md` | Non-technical product description — useful context, not a build guide |
+| `docs/archive/PRODUCT_OVERVIEW.md` | Non-technical product description — pre-build artifact, archived |
 
 ---
 

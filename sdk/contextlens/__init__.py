@@ -1,4 +1,5 @@
 from contextlens.context import TraceContext
+from contextlens.stats import get_stats
 
 
 def trace(query: str) -> TraceContext:
@@ -18,4 +19,4 @@ def trace(query: str) -> TraceContext:
     return TraceContext(query)
 
 
-__all__ = ["trace"]
+__all__ = ["trace", "get_stats"]

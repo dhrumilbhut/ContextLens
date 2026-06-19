@@ -29,6 +29,7 @@ class AttributionDetail(BaseModel):
     source_document: str
     chunk_index: int
     attribution_score: float
+    confidence: Optional[str] = None  # 'high' | 'low' | None
 
 
 class ClaimDetail(BaseModel):
@@ -36,9 +37,9 @@ class ClaimDetail(BaseModel):
     claim_text: str
     claim_index: int
     attribution: Optional[AttributionDetail] = None
-    faithfulness_verdict: str
-    faithfulness_score: float
-    is_faithful: bool
+    faithfulness_verdict: str  # 'faithful' | 'partial' | 'unfaithful' | 'refusal'
+    faithfulness_score: Optional[float] = None  # None for refusal claims
+    is_faithful: Optional[bool] = None           # None for refusal claims
     judge_reasoning: str
 
 

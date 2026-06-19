@@ -101,5 +101,3 @@ This is a good example of prompt calibration being iterative. The first fix over
 ### Key takeaway for content
 
 LLM-as-judge has a systematic blind spot for omissions vs contradictions. A model will reliably catch "30 days" changed to "14 days" (contradiction) but will often miss "7 business days" dropped to "7 days" (omission) because it fills the gap from training. The fix is to force quote-first reasoning — make the model copy the source text verbatim before judging. This single change was the difference between missing the bug entirely and catching it with the right label.
-
----
